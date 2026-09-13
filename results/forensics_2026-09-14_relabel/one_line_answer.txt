@@ -1,0 +1,1 @@
+On identical held-out samples (same predictions, same intervals), the worst-covered stage differs between the fixed-fraction and CUSUM staging conventions for 3/4 datasets -- the reversal SURVIVES the same-sample correction.

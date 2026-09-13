@@ -1,0 +1,12 @@
+{
+  "fd": "FD003",
+  "seed": 2,
+  "split_hash": "bb7a789caa43ff59",
+  "git_commit": "f4a54813fac5004c638a91b381735e9a060f1794",
+  "stage1_best_rmse": 14.135909080505371,
+  "stage2_best_nll": 2.655017673969269,
+  "elapsed_sec": 91.3,
+  "n_train": 17863,
+  "n_cal": 3957,
+  "n_test": 100
+}
