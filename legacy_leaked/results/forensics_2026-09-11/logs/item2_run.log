@@ -1,0 +1,22 @@
+[FD001_seed0] n_cal_units=10 n_eval_units=10 done
+[FD001_seed1] n_cal_units=10 n_eval_units=10 done
+[FD001_seed2] n_cal_units=10 n_eval_units=10 done
+[FD001_seed3] n_cal_units=10 n_eval_units=10 done
+[FD001_seed4] n_cal_units=10 n_eval_units=10 done
+[FD002_seed0] n_cal_units=26 n_eval_units=26 done
+[FD002_seed1] n_cal_units=26 n_eval_units=26 done
+[FD002_seed2] n_cal_units=26 n_eval_units=26 done
+[FD002_seed3] n_cal_units=26 n_eval_units=26 done
+[FD002_seed4] n_cal_units=26 n_eval_units=26 done
+[FD003_seed0] n_cal_units=10 n_eval_units=10 done
+[FD003_seed1] n_cal_units=10 n_eval_units=10 done
+[FD003_seed2] n_cal_units=10 n_eval_units=10 done
+[FD003_seed3] n_cal_units=10 n_eval_units=10 done
+[FD003_seed4] n_cal_units=10 n_eval_units=10 done
+[FD004_seed0] n_cal_units=25 n_eval_units=25 done
+[FD004_seed1] n_cal_units=25 n_eval_units=25 done
+[FD004_seed2] n_cal_units=25 n_eval_units=25 done
+[FD004_seed3] n_cal_units=25 n_eval_units=25 done
+[FD004_seed4] n_cal_units=25 n_eval_units=25 done
+
+Saved 11360 rows -> item2_six_method_multiseed.csv
