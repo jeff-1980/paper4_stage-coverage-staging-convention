@@ -36,7 +36,7 @@ Mondrian CP: two explicit modes (verification item 4), both available:
     .update() calls), so lambda may still drift call-to-call, but strictly as a
     function of the fixed calibration-set buffer, never of eval-time y_true.
 """
-import sys, os, copy
+import sys, os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))  # so `models.*`/`conformal.*` resolve to this scripts/ dir
 
 import numpy as np
@@ -156,22 +156,5 @@ def run_mondrian_online(mondrian, mus, sigs, y_true, h_mult):
         stg = assign_stage(t, t_cp, n)
         l, h = mondrian.predict_interval(float(t), mus[t], sigs[t], stg)
         mondrian.update(float(t), y_true[t], mus[t], sigs[t], stg)
-        lo.append(l); hi.append(h); stages.append(stg)
-    return np.array(lo), np.array(hi), stages, t_cp
-
-
-def run_mondrian_frozen(mondrian_warmed, mus, sigs, y_true, h_mult):
-    """mode='frozen': deep-copies the warmed instance so this eval engine's run
-    cannot affect, or be affected by, any other eval engine's run. Never calls
-    .update() -- no eval-time y_true ever enters any buffer."""
-    mondrian = copy.deepcopy(mondrian_warmed)
-    scores = np.minimum(np.abs(y_true - mus) / np.maximum(sigs, 1e-3), 10.0)
-    k_mult = 0.7 * h_mult / 7.0
-    t_cp = detect_cp_cusum(scores.tolist(), k_mult=k_mult, h_mult=h_mult)
-    lo, hi, stages = [], [], []
-    n = len(mus)
-    for t in range(n):
-        stg = assign_stage(t, t_cp, n)
-        l, h = mondrian.predict_interval(float(t), mus[t], sigs[t], stg)
         lo.append(l); hi.append(h); stages.append(stg)
     return np.array(lo), np.array(hi), stages, t_cp
