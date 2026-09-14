@@ -16,29 +16,49 @@ WARM-UP / BUFFER / ORDERING RULES (also restated in README.md (repo root)):
     reproducible regardless of call order or process. mu/sigma are computed
     ONCE per (fd,seed,unit) and reused for all downstream h values -- MC-Dropout
     and Split CP intervals never depend on h at all.
-  - CUSUM: k_mult=0.7 held FIXED across h in {5.0, 7.0, 10.0} (NOT the
+  - CUSUM (Stage 0-R2 fix): baseline window is the first max(floor(0.2*n),20)
+    scores of a unit's OWN trajectory (was hardcoded scores[:10] before this
+    round). An instance that never crosses the threshold now returns cp=n
+    exactly (was cp=n-1) -- assign_stage(t, n, n) leaves the LATE bucket
+    genuinely empty for that instance, rather than containing one leftover
+    timestep. k_mult=0.7 held FIXED across h in {5.0, 7.0, 10.0} (NOT the
     linked rule k=0.7*h/7 used in earlier forensics rounds). h=7.0 is primary
     (unsuffixed columns); h=5.0/10.0 give the _h5/_h10 suffixed columns for
-    the h-sensitivity table. detect_cp_cusum from conformal.mondrian_cp,
-    unmodified logic, called once per (unit, h).
+    the h-sensitivity table. detect_cp_cusum is now the ONLY implementation
+    (conformal.mondrian_cp) -- this file's own former duplicate loop
+    (detect_cusum_tracked) is now a thin wrapper around it, closing off the
+    exact kind of two-implementations drift this rebuild fixed for MC-Dropout.
   - Split CP: single calibration quantile q_hat from ALL cal_units' scores
     pooled (np.quantile, method='higher'), alpha=0.10. Independent of h.
-  - Mondrian CP warm-up: for EACH h in {5,7,10}, ONE MondirianCP(alpha=0.10,
-    W_max=200, total_lifetime_est=AVG_LIFETIME[fd]) online-base instance and
-    one separate frozen-base instance are warmed by feeding every cal_unit's
-    (mu,sigma,y_true) triple with k_mult=0.7 fixed, IN THE ORDER cal_units
-    APPEARS IN meta_{fd}_seed{seed}.json (the order fixed by train_clean.py's
-    original random split). 6 total warmed instances per (fd,seed): {online,
-    frozen} x {h=5,7,10}.
-  - Mondrian online: for each h, the SAME warmed instance is shared and
-    continuously updated (.update() after every .predict_interval()) across
-    ALL eval_units, IN THE ORDER eval_units APPEARS IN meta_*.json. Order
-    matters for this mode by construction and is fixed as above.
-  - Mondrian frozen: for each (eval unit, h), copy.deepcopy() that h's warmed
-    frozen base fresh, call .predict_interval() only (never .update()). Order
-    among eval units does not matter for this mode (independent deepcopy per
-    unit, no shared mutable state).
-  - Unbounded-interval threshold: np.isinf(width), width=hi-lo.
+  - Mondrian CP online: for EACH h in {5,7,10}, ONE MondirianCP(alpha=0.10,
+    W_max=200, total_lifetime_est=AVG_LIFETIME[fd]) instance is warmed by
+    feeding every cal_unit's (mu,sigma,y_true) triple with k_mult=0.7 fixed,
+    IN THE ORDER cal_units APPEARS IN meta_{fd}_seed{seed}.json (the order
+    fixed by train_clean.py's original random split). That SAME warmed
+    instance is then shared and continuously updated (.update() after every
+    .predict_interval()) across ALL eval_units, IN THE ORDER eval_units
+    APPEARS IN meta_*.json -- order matters for this mode by construction.
+    Internally, AdaptiveLambdaCP's predict_interval() appends a pseudo-score
+    of +inf with unnormalized weight 1.0 to the exponentially-decaying buffer
+    weights before taking the weighted quantile (see
+    conformal/adaptive_lambda_cp.py::_weights/predict_interval) -- this is
+    what produces genuinely unbounded intervals when the real buffer's
+    weighted mass at the target quantile level is thin (small/young buffer,
+    or a stage whose calibration scores are unusually tight).
+  - Mondrian CP (split) [Stage 0-R2 redefinition, was 'frozen']: NOT an
+    online/adaptive instance at all. build_mondrian_split_quantiles() fills
+    each of the 3 stage buckets ONCE from ALL cal_units' scores (uniform
+    weight, no lambda, no time index), then takes the standard split-CP
+    empirical quantile ceil((m+1)(1-alpha))/m per stage. run_mondrian_split()
+    applies that fixed per-stage quantile to every eval sample -- no
+    .update(), no rollback, no shared mutable state; eval-unit order is
+    provably irrelevant. The previous 'frozen' definition (deepcopy of the
+    online AdaptiveLambdaCP instance, predict-only) was still an
+    adaptive/exponentially-weighted machine underneath; this is the
+    classical, non-adaptive Mondrian conformal predictor the name implies.
+  - Unbounded-interval threshold: np.isinf(width), width=hi-lo. For Mondrian
+    (split), width is inf when a stage's calibration bucket is empty or its
+    quantile level exceeds 1 (standard split-CP small-sample rule).
   - Per-engine aggregation excludes unbounded (is_inf) samples for the
     "finite-only" ECR number; a separate "unbounded-as-covered" number is also
     reported (aggregate.py::table_main), since an infinite-width interval
@@ -111,26 +131,75 @@ def run_mondrian_online_kfixed(mondrian, mus, sigs, y_true, h_mult, k_mult=K_FIX
     return np.array(lo), np.array(hi), stages, t_cp
 
 
-def run_mondrian_frozen_kfixed(mondrian_warmed, mus, sigs, y_true, h_mult, k_mult=K_FIXED):
-    mondrian = copy.deepcopy(mondrian_warmed)
+def build_mondrian_split_quantiles(cal_series_list, h_mult, k_mult=K_FIXED, alpha=ALPHA):
+    """'Mondrian CP (split)': standard (non-adaptive) Mondrian conformal
+    prediction. Calibration nonconformity scores are partitioned into 3 stage
+    buckets (via CUSUM on each cal unit's OWN trajectory, same detect_cp_cusum
+    as everywhere else), each bucket filled ONCE from ALL calibration units
+    (uniform weight -- every calibration score in a stage counts equally, no
+    exponential decay, no lambda, no time-index rollback), then the standard
+    split-CP empirical quantile ceil((m+1)(1-alpha))/m (method='higher') is
+    computed per stage. This REPLACES the previous 'frozen' definition
+    (deepcopy of the online AdaptiveLambdaCP instance, predict-only) -- that
+    was still an online/adaptive machine underneath, just not fed eval-time
+    feedback; this is genuinely the classical, non-adaptive Mondrian split CP.
+    Returns {stage: q_hat}, q_hat=np.inf if a stage's calibration bucket is
+    empty or the quantile level exceeds 1 (standard split-CP small-sample rule)."""
+    buckets = {'early': [], 'middle': [], 'late': []}
+    for mus, sigs, y_true in cal_series_list:
+        scores = np.minimum(np.abs(y_true - mus) / np.maximum(sigs, 1e-3), 10.0)
+        t_cp = detect_cp_cusum(scores.tolist(), k_mult=k_mult, h_mult=h_mult)
+        n = len(mus)
+        for t in range(n):
+            stg = assign_stage(t, t_cp, n)
+            buckets[stg].append(scores[t])
+    q = {}
+    for stg in ['early', 'middle', 'late']:
+        m = len(buckets[stg])
+        if m == 0:
+            q[stg] = np.inf
+            continue
+        level = np.ceil((m + 1) * (1 - alpha)) / m
+        q[stg] = np.inf if level > 1.0 else float(np.quantile(np.array(buckets[stg]), level, method='higher'))
+    return q
+
+
+def run_mondrian_split(q_by_stage, mus, sigs, y_true, h_mult, k_mult=K_FIXED):
+    """Applies the fixed, once-computed per-stage quantile to every eval
+    sample. No .update(), no time-index rollback, no weighting -- order among
+    eval units or timesteps does not matter (verified by construction: this
+    function has no mutable state at all)."""
     scores = np.minimum(np.abs(y_true - mus) / np.maximum(sigs, 1e-3), 10.0)
     t_cp = detect_cp_cusum(scores.tolist(), k_mult=k_mult, h_mult=h_mult)
-    lo, hi, stages = [], [], []
     n = len(mus)
+    lo, hi, stages = [], [], []
     for t in range(n):
         stg = assign_stage(t, t_cp, n)
-        l, h = mondrian.predict_interval(float(t), mus[t], sigs[t], stg)
-        lo.append(l); hi.append(h); stages.append(stg)
+        q = q_by_stage[stg]
+        lo.append(mus[t] - q * sigs[t])
+        hi.append(mus[t] + q * sigs[t])
+        stages.append(stg)
     return np.array(lo), np.array(hi), stages, t_cp
 
 
 HEADER_COMMENT = """\
-# Stage 0-R canonical per-sample data source (per_sample_final.csv).
+# Stage 0-R2 canonical per-sample data source (per_sample_final_v2.csv).
 # Generated by build_canonical.py -- see its module docstring and
 # README.md (repo root) for the complete warm-up/buffer/ordering rules.
-# Fixes the MC-Dropout seeding bug that caused per_sample_clean.csv
-# (relabel_clean.py) and per_sample_mechanism.csv (mechanism_clean.py) to
-# silently diverge on Mondrian CP (online) by ~0.01-0.02 ECR.
+# v2 vs v1 (per_sample_final.csv, superseded but kept on disk): three fixes,
+# no retraining --
+#   1. MC-Dropout total variance corrected to mean(sigma_b^2) + Var(mu_b)
+#      (models/bayesian_lstm.py::predict_mc; was sigma_mean^2 + Var(mu_b)).
+#   2. CUSUM baseline window widened to max(floor(0.2n),20) (was hardcoded
+#      [:10]); an instance that never triggers now gets cp=n exactly, i.e. a
+#      genuinely empty late bucket (was cp=n-1, one leftover late timestep).
+#   3. 'Mondrian CP (frozen)' redefined as 'Mondrian CP (split)': a classical,
+#      non-adaptive Mondrian split conformal predictor (fill each stage's
+#      calibration bucket once, uniform weight, standard empirical quantile)
+#      -- replaces the old definition, which was a deepcopy of the online
+#      AdaptiveLambdaCP instance and still adaptive/exponentially-weighted
+#      underneath even though it wasn't fed eval-time feedback. Column names
+#      (mf/covered_mf/etc.) are unchanged; what they mean is not.
 # CUSUM: k=0.7 fixed (NOT linked to h) across h in {5.0, 7.0, 10.0}.
 # h=7.0 columns are unsuffixed (primary/main-table); h=5.0/10.0 columns carry
 # _h5/_h10 suffixes (h-sensitivity table only).
@@ -140,21 +209,17 @@ HEADER_COMMENT = """\
 
 
 def detect_cusum_tracked(scores, h_mult, k_mult=K_FIXED):
-    if len(scores) < 20:
-        return len(scores) // 2, False
-    mu0 = np.mean(scores[:10])
-    sigma = np.std(scores[:10]) + 1e-8
-    k = k_mult * sigma
-    h = h_mult * sigma
-    cusum = 0.0
-    cp = len(scores) - 1
-    triggered = False
-    for i, s in enumerate(scores):
-        cusum = max(0.0, cusum + (s - mu0) - k)
-        if cusum > h:
-            cp = i
-            triggered = True
-            break
+    """Thin wrapper around conformal.mondrian_cp.detect_cp_cusum (the shared,
+    single-implementation detector) that also reports whether the threshold
+    was ever crossed. Previously this function carried its OWN duplicate
+    CUSUM loop (hardcoded baseline window scores[:10], fallback cp=n-1) that
+    could silently drift out of sync with the shared implementation used by
+    the Mondrian warm/online/frozen(split) functions -- exactly the kind of
+    two-implementations bug this rebuild is fixing elsewhere. Now: single
+    implementation, called once."""
+    n = len(scores)
+    cp = detect_cp_cusum(scores, k_mult=k_mult, h_mult=h_mult)
+    triggered = cp < n
     return cp, triggered
 
 
@@ -191,7 +256,7 @@ def process_fd_seed(fd, seed, device):
 
     T_est = AVG_LIFETIME[fd]
     mondrian_online_base = {h: warm_mondrian_kfixed(cal_series, T_est, h) for h in H_MULTS}
-    mondrian_frozen_base = {h: warm_mondrian_kfixed(cal_series, T_est, h) for h in H_MULTS}
+    mondrian_split_q = {h: build_mondrian_split_quantiles(cal_series, h) for h in H_MULTS}
 
     z = norm.ppf(1 - ALPHA / 2)
 
@@ -235,7 +300,7 @@ def process_fd_seed(fd, seed, device):
             width_o = hi_o - lo_o
             covered_o = (y_true >= lo_o) & (y_true <= hi_o)
 
-            lo_f, hi_f, _, _ = run_mondrian_frozen_kfixed(mondrian_frozen_base[h], mus, sigs, y_true, h)
+            lo_f, hi_f, _, _ = run_mondrian_split(mondrian_split_q[h], mus, sigs, y_true, h)
             width_f = hi_f - lo_f
             covered_f = (y_true >= lo_f) & (y_true <= hi_f)
 
@@ -300,10 +365,10 @@ def build_matched_labels(csv_path):
 
 def run():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    tmp_path = OUT / 'per_sample_final_tmp.csv'
-    final_path = OUT / 'per_sample_final.csv'
-    clock_path = OUT / 'per_unit_clocks_final.csv'
-    thresh_path = OUT / 'trainpct_thresholds_final.csv'
+    tmp_path = OUT / 'per_sample_final_v2_tmp.csv'
+    final_path = OUT / 'per_sample_final_v2.csv'
+    clock_path = OUT / 'per_unit_clocks_final_v2.csv'
+    thresh_path = OUT / 'trainpct_thresholds_final_v2.csv'
     if tmp_path.exists():
         tmp_path.unlink()
 
@@ -336,7 +401,7 @@ def run():
     md5 = hashlib.md5(final_path.read_bytes()).hexdigest()
     print(f'Phase 2 done: stage_matched filled using CUSUM(h=7) occupancy {props}')
     print(f'Wrote {final_path}, {len(df_final)} rows, md5={md5}')
-    with open(OUT / 'per_sample_final.md5', 'w') as f:
+    with open(OUT / 'per_sample_final_v2.md5', 'w') as f:
         f.write(md5 + '\n')
     return md5
 

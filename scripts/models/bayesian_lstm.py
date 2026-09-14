@@ -57,10 +57,9 @@ class BayesianLSTM(nn.Module):
                 mu, sigma = self(x)
                 mus.append(mu.cpu().numpy())
                 sigmas.append(sigma.cpu().numpy())
-        mu_mean    = np.mean(mus, axis=0)
-        sigma_mean = np.mean(sigmas, axis=0)
-        sigma_total = np.sqrt(
-            sigma_mean**2 + np.var(mus, axis=0))
+        mu_mean = np.mean(mus, axis=0)
+        sigma_sq_mean = np.mean(np.square(sigmas), axis=0)  # mean(sigma_b^2), NOT mean(sigma_b)^2
+        sigma_total = np.sqrt(sigma_sq_mean + np.var(mus, axis=0))
         return mu_mean, sigma_total
 
 def gaussian_nll_loss(mu, sigma, y):

@@ -10,14 +10,16 @@ def detect_cp_cusum(scores, k_mult=0.7, h_mult=7.0):
     scores: 得分时序（单台发动机内部）
     返回：变点位置idx（归一化后即阶段边界）
     """
-    if len(scores) < 20:
-        return len(scores) // 2
-    mu0   = np.mean(scores[:10])
-    sigma = np.std(scores[:10]) + 1e-8
+    n = len(scores)
+    if n < 20:
+        return n // 2
+    w = min(max(int(0.2 * n), 20), n)
+    mu0   = np.mean(scores[:w])
+    sigma = np.std(scores[:w]) + 1e-8
     k     = k_mult * sigma
     h     = h_mult * sigma
     cusum = 0.0
-    cp    = len(scores) - 1
+    cp    = n  # never triggered -> cp=n (late bucket empty), not n-1
     for i, s in enumerate(scores):
         cusum = max(0.0, cusum + (s - mu0) - k)
         if cusum > h:
