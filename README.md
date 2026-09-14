@@ -2,10 +2,44 @@
 
 This repository corresponds to the **third version** of the note (Stage 0-R2:
 three implementation fixes on top of the Stage 0-R clean, leak-free pipeline;
-no retraining), with a **Stage 0-R3 patch** applied on top (one further, more
-narrowly scoped fix — see below). See `legacy_leaked/` for why the *first*
-version's numbers were withdrawn, and "Known retracted analyses" below for
-two more recent, narrower retractions.
+no retraining), with two further narrowly-scoped patches applied on top:
+**Stage 0-R3** (Mondrian CP (split)'s calibration quantile) and **Stage
+0-R4** (Split CP's calibration quantile, the same fix applied to the other
+method that uses a calibration quantile). See `legacy_leaked/` for why the
+*first* version's numbers were withdrawn, and "Known retracted analyses"
+below for two more recent, narrower retractions.
+
+## Stage 0-R4 patch (post-Stage-0-R3 correction)
+
+One further fix, scoped to Split CP only, applied on top of the Stage 0-R3
+patch below — no retraining, no other method touched.
+
+- **Split CP calibration quantile, off-by-one fix**
+  (`scripts/build_canonical.py`, Split CP's `q_hat` computation). The same
+  bug as the Stage 0-R3 Mondrian CP (split) fix, in the sibling code path:
+  `q_hat` was computed as
+  `np.quantile(cal_scores_all, ceil((nC+1)(1-alpha))/nC, method='higher')` —
+  not exactly the k-th order statistic, for the same reason (`np.quantile`'s
+  `'higher'` method scales its virtual index by `(nC-1)`, not `nC`). Now
+  computed directly: `k = ceil((nC+1)(1-alpha))`; `q_hat = sorted(scores)[k-1]`
+  (`k > nC` would give `q_hat = inf`, but does not occur in practice — `nC`,
+  the pooled calibration size, is far larger than `1/alpha`). Verified case
+  (FD001/seed0's calibration pool): `nC=2153`, `k=1939` — old
+  `q_hat=1.380400`, corrected `q_hat=1.378504`.
+  *Effect on conclusions:* rebuilding the canonical file
+  (`per_sample_final_v4.csv`, replacing v3's `per_sample_final_v3.csv`)
+  changes ONLY `q_hat` and `lo_sp`/`hi_sp`/`width_sp`/`covered_sp` (12 of
+  89,273 `covered_sp` values flip); every other column — including
+  `stage_cusum` (computed from `s_t`, which does not depend on `q_hat`) and
+  every Mondrian CP column — is bit-identical to v3, verified by a full
+  column-by-column diff. Split CP's worst-stage findings are unchanged
+  everywhere checked (main table, full-availability TrainPct, Matched,
+  h-sensitivity: 0 cells flip); the non-bucketed methods' (MC-Dropout, Split
+  CP) headline pattern — fixed-fraction middle-worst, CUSUM late-worst — is
+  unaffected, as is every Mondrian CP number in every table (confirmed by
+  diff against the Stage 0-R3 tables, 0 changed cells across
+  `table_main`/`table_mondrian_unbounded`/`table_matched`/`table_h_sensitivity`/
+  the cohort tables).
 
 ## Stage 0-R3 patch (post-Stage-0-R2 correction)
 
@@ -94,7 +128,8 @@ models — only inference-time and analysis-time code changed.
    `run_mondrian_frozen_kfixed`.
 
 Two further v3 analyses (not comparisons to v1, new in this round; table
-names below are the Stage 0-R3-patched `_v3` versions):
+names below are the current Stage-0-R4-patched `_v4` versions — see the
+Stage 0-R4 patch note above):
 
 - **Cohort restriction** (instances/engines with ≥1 window in all 3 stages
   of a convention — see Design notes below for the exact definition):
@@ -105,84 +140,98 @@ names below are the Stage 0-R3-patched `_v3` versions):
   early-worst. The same restriction applied to CUSUM (425/455 in cohort)
   leaves all 16 cells unchanged (0/16 flips), including Mondrian CP (online).
   Reported as two coexisting readings (full availability vs. matched
-  population), not resolved in favor of either
-  (`tables/table_trainpct_full_vs_cohort_v3.{csv,tex}`,
-  `tables/table_cusum_cohort_check_v3.csv`).
+  population), not resolved in favor of either (figures unchanged by the
+  Stage 0-R4 patch below; current tables:
+  `tables/table_trainpct_full_vs_cohort_v4.{csv,tex}`,
+  `tables/table_cusum_cohort_check_v4.csv` — the v3-era files this bullet
+  originally cited are archived under `tables/v3_superseded/`).
 - **Paired-difference CIs** via a unique-engine-block bootstrap (10,000
   resamples; see Design notes): 15 of 16 cells exclude zero. The one
   exception (FD001, MC-Dropout, CUSUM late−middle: mean −0.044, 95% CI
   [−0.0947, 0.0067]) is a genuine boundary result, not a bootstrap
   implementation error — it is the smallest-in-absolute-value mean
-  difference of all 16 cells, on the smallest-N subset (`tables/paired_diff_v3.csv`).
+  difference of all 16 cells, on the smallest-N subset (current table:
+  `tables/paired_diff_v4.csv`; unchanged by the Stage 0-R4 patch, which
+  touches only MC-Dropout/Split CP's own q_hat, not this cross-stage
+  comparison's underlying coverage indicators for MC-Dropout, and shifts
+  Split CP's by only 12 of 89,273 samples).
 
 ## Directory overview
 
-- `data/per_sample_final_v3.csv` — the canonical per-sample data source,
-  current as of the Stage 0-R3 patch. One row per (fd, seed, engine, t): raw
+- `data/per_sample_final_v4.csv` — the canonical per-sample data source,
+  current as of the Stage 0-R4 patch. One row per (fd, seed, engine, t): raw
   model outputs (mu, sigma, y_true, s_t), all four methods' interval bounds
   (MC-Dropout, Split CP, Mondrian CP online, Mondrian CP split — Mondrian's
   at h ∈ {5, 7, 10}, k=0.7 fixed), and four staging-convention labels
   (fixed-fraction, CUSUM, train-set-percentile, occupancy-matched).
-  `data/per_sample_final_v3.md5` is its md5
-  (`f164af8d4a76559f817269c32131ee4e`). Every table and figure under `tables/`
-  and `figures/` with a `_v3` suffix is generated from this one file.
-  `data/per_sample_final_v2.csv` (+ `.md5`) is **v2**, kept on disk,
-  **superseded** — it predates the Stage 0-R3 patch above; only its
+  `data/per_sample_final_v4.md5` is its md5
+  (`b539b21dbd0d71f1bfa65c0d50990cab`). Every table and figure under `tables/`
+  and `figures/` with a `_v4` suffix is generated from this one file.
+  `data/per_sample_final_v3.csv` (+ `.md5`) is **v3**, kept on disk,
+  **superseded** — it predates the Stage 0-R4 patch above; only `q_hat` and
+  `lo_sp`/`hi_sp`/`width_sp`/`covered_sp` differ from v4, everything else
+  (including every Mondrian CP column) is bit-identical.
+  `data/per_sample_final_v2.csv` (+ `.md5`) is **v2**, also kept, also
+  superseded — it predates the Stage 0-R3 patch too; only its
   `mf`/`covered_mf`/`is_inf_mf` columns (+ `_h5`/`_h10` siblings) differ from
-  v3, everything else is bit-identical. `data/per_sample_final.csv` (+ `.md5`)
-  is **v1**, also kept, also superseded — see the v3 changelog above for the
-  three fixes it predates. Do not mix columns across v1/v2/v3 in one table.
-- `data/per_unit_clocks_final_v3.csv`, `data/trainpct_thresholds_final_v3.csv`
+  v3. `data/per_sample_final.csv` (+ `.md5`) is **v1**, also kept, also
+  superseded — see the v3 changelog above for the three fixes it predates.
+  Do not mix columns across v1/v2/v3/v4 in one table.
+- `data/per_unit_clocks_final_v4.csv`, `data/trainpct_thresholds_final_v4.csv`
   — secondary per-unit and per-(fd,seed) statistics produced alongside the
-  v3 canonical file (RUL-clip knee position, CUSUM change-point position, the
+  v4 canonical file (RUL-clip knee position, CUSUM change-point position, the
   train-set 33rd/67th raw-cycle percentiles used by the train-set-percentile
-  convention). These are unaffected by the Stage 0-R3 patch (it only touches
-  Mondrian CP (split)'s calibration quantile) but are regenerated alongside
-  for a consistent (fd,seed) build; `_v2`- and unsuffixed counterparts are
-  the superseded v2/v1 versions, kept on disk.
+  convention). These are unaffected by either the Stage 0-R3 or Stage 0-R4
+  patch (neither touches CUSUM or the knee/cp clocks) — bit-identical to
+  their v3 counterparts, verified by diff — but are regenerated alongside for
+  a consistent (fd,seed) build; `_v3`/`_v2`- and unsuffixed counterparts are
+  the superseded v3/v2/v1 versions, kept on disk.
 - `models/` — 20 trained Bayesian LSTM checkpoints (`best_{FD}_seed{N}.pt`,
   4 subsets × 5 seeds) and their manifests (`meta_{FD}_seed{N}.json`: 4-way
   engine-level split hash, the engine list for each of the 4 partitions,
-  scaler fit statistics and their source). **Unchanged since v1/v2/v3** — no
-  fix in this repository's history retrains anything. Stage 2 training uses
-  a fixed epoch cap of 100 (`train_clean.py::CFG['epochs_stage2']`, early-stop
-  patience 15); stage 1 uses 50 epochs (patience 10).
+  scaler fit statistics and their source). **Unchanged since v1/v2/v3/v4** —
+  no fix in this repository's history retrains anything. Stage 2 training
+  uses a fixed epoch cap of 100 (`train_clean.py::CFG['epochs_stage2']`,
+  early-stop patience 15); stage 1 uses 50 epochs (patience 10).
 - `scripts/` — `train_clean.py` (trains the 20 checkpoints), `inference_clean.py`
   (shared inference library: seeded MC-Dropout, Mondrian CP warm-up/online;
   its dead `run_mondrian_frozen` function — left over from before the split
-  redefinition in the v3 changelog above — has been deleted in this patch, it
-  was never called from anywhere), `build_canonical.py` (produces
-  `data/per_sample_final_v3.csv`), `aggregate.py` (produces everything in
-  `tables/` from that one file, including the reintroduced h-sensitivity
-  table), `figures_final.py` (produces everything in `figures/`). Also
-  includes the two small local packages these scripts import:
-  `scripts/models/bayesian_lstm.py` and
+  redefinition in the v3 changelog above — was deleted in the Stage 0-R3
+  patch, it was never called from anywhere), `build_canonical.py` (produces
+  `data/per_sample_final_v4.csv`), `aggregate.py` (produces everything in
+  `tables/` from that one file, including the h-sensitivity table
+  reintroduced in Stage 0-R3), `figures_final.py` (produces everything in
+  `figures/`). Also includes the two small local packages these scripts
+  import: `scripts/models/bayesian_lstm.py` and
   `scripts/conformal/{mondrian_cp,adaptive_lambda_cp}.py`.
 - `tables/` — every current `.csv`/`.tex` table, all generated by
-  `aggregate.py` from `data/per_sample_final_v3.csv`: `table_main_v3`
+  `aggregate.py` from `data/per_sample_final_v4.csv`: `table_main_v4`
   (main ECR table, 4 conventions × 4 methods × 3 stages),
-  `table_mondrian_unbounded_v3` (unbounded-interval rates),
-  `table_B_trainpct_v3` / `table_trainpct_cohort_v3` /
-  `table_trainpct_full_vs_cohort_v3` (train-set-percentile convention: full
+  `table_mondrian_unbounded_v4` (unbounded-interval rates),
+  `table_B_trainpct_v4` / `table_trainpct_cohort_v4` /
+  `table_trainpct_full_vs_cohort_v4` (train-set-percentile convention: full
   availability vs. the ≥1-window-per-stage cohort, side by side),
-  `table_cusum_cohort_check_v3` (same cohort restriction applied to CUSUM, as
-  a confirmation check), `paired_diff_v3` (within-engine paired differences,
-  both bootstrap variants), `table_matched_v3` (occupancy-matched
-  convention), `bucket_geometry_v3`, `A1_clocks_v3`, `A2_decile_v3`
-  (mechanism diagnostics), `table_h_sensitivity_v3` (CUSUM convention, k
-  fixed, h ∈ {5,7,10}, 48 rows — reintroduced in this patch, absent from v2).
+  `table_cusum_cohort_check_v4` (same cohort restriction applied to CUSUM, as
+  a confirmation check), `paired_diff_v4` (within-engine paired differences,
+  both bootstrap variants), `table_matched_v4` (occupancy-matched
+  convention), `bucket_geometry_v4`, `A1_clocks_v4`, `A2_decile_v4`
+  (mechanism diagnostics), `table_h_sensitivity_v4` (CUSUM convention, k
+  fixed, h ∈ {5,7,10}, 48 rows — reintroduced in Stage 0-R3, absent from v2).
   Every `.tex` fragment's header comment records the `aggregate.py` function
-  that produced it and `per_sample_final_v3.csv`'s md5 at generation time.
-  `tables/v2_superseded/` holds the complete set of v2 tables (all of the
-  above, `_v2`-suffixed, pre-patch), and `tables/v1_superseded/` the v1 set
-  (`table_main_final`, `h_sensitivity_kfixed_final`, `paired_diff_final`,
-  `A1_clocks_final`, `A2_decile_final`, `A3_crosstab_final`,
-  `A4_occupancy_final`, `B_trainpct_final`, `C_matched_final`, and their
-  `.tex` siblings) — both unmodified, for audit.
-- `figures/` — `fig_clocks_v3.pdf`, `fig_residual_deciles_v3.pdf`,
-  `fig_failure_deciles_v3.pdf`, all produced by `scripts/figures_final.py`
-  from the v3 data. `figures/v2_superseded/` and `figures/v1_superseded/`
-  hold the pre-patch v2 and original v1 figures respectively.
+  that produced it and `per_sample_final_v4.csv`'s md5 at generation time.
+  `tables/v3_superseded/` holds the complete set of v3 tables (all of the
+  above, `_v3`-suffixed, pre-Stage-0-R4-patch), `tables/v2_superseded/` the
+  v2 set (`_v2`-suffixed, pre-Stage-0-R3-patch), and `tables/v1_superseded/`
+  the v1 set (`table_main_final`, `h_sensitivity_kfixed_final`,
+  `paired_diff_final`, `A1_clocks_final`, `A2_decile_final`,
+  `A3_crosstab_final`, `A4_occupancy_final`, `B_trainpct_final`,
+  `C_matched_final`, and their `.tex` siblings) — all three unmodified, for
+  audit.
+- `figures/` — `fig_clocks_v4.pdf`, `fig_residual_deciles_v4.pdf`,
+  `fig_failure_deciles_v4.pdf`, all produced by `scripts/figures_final.py`
+  from the v4 data. `figures/v3_superseded/`, `figures/v2_superseded/`, and
+  `figures/v1_superseded/` hold the pre-Stage-0-R4-patch v3, pre-Stage-0-R3-
+  patch v2, and original v1 figures respectively.
 - `legacy_leaked/` — the complete first-version pipeline, archived (not
   deleted) for audit. See its own note below. **Do not cite or reproduce
   anything from this directory** — every number it produced is withdrawn.
@@ -193,21 +242,22 @@ Dependencies: Python 3, `numpy`, `pandas`, `torch`, `scipy`, `matplotlib`,
 `scikit-learn`. GPU is optional (helps `train_clean.py`; inference-only
 scripts run fine on CPU, just slower — but see the CUDA/CPU note below).
 
-**Regenerate every v3 table and figure from the canonical file (fastest, no
+**Regenerate every v4 table and figure from the canonical file (fastest, no
 GPU, no raw data needed):**
 ```
-python3 scripts/aggregate.py       # writes tables/*_v3.{csv,tex} and related
-python3 scripts/figures_final.py   # writes figures/*_v3.pdf, reads data/per_unit_clocks_final_v3.csv + tables/A2_decile_v3.csv
+python3 scripts/aggregate.py       # writes tables/*_v4.{csv,tex} and related
+python3 scripts/figures_final.py   # writes figures/*_v4.pdf, reads data/per_unit_clocks_final_v4.csv + tables/A2_decile_v4.csv
 ```
 
 **Regenerate only the h-sensitivity table** (k fixed, h ∈ {5,7,10}, 48 rows;
-reintroduced in the Stage 0-R3 patch, run `scripts/aggregate.py` at least
-once first if `data/per_sample_final_v3.csv` isn't already loaded/cached):
+reintroduced in the Stage 0-R3 patch, regenerated against v4 data here, run
+`scripts/aggregate.py` at least once first if `data/per_sample_final_v4.csv`
+isn't already loaded/cached):
 ```
 python3 -c "import sys; sys.path.insert(0, 'scripts'); from aggregate import table_h_sensitivity; table_h_sensitivity()"
 ```
 
-**Rebuild `data/per_sample_final_v3.csv` from the 20 checkpoints in `models/`**
+**Rebuild `data/per_sample_final_v4.csv` from the 20 checkpoints in `models/`**
 (re-runs inference only, does not retrain):
 1. Download the NASA C-MAPSS Turbofan Degradation dataset (`train_FD001.txt`
    .. `train_FD004.txt`, `test_FD00*.txt`, `RUL_FD00*.txt`) from the [NASA
@@ -215,8 +265,8 @@ python3 -c "import sys; sys.path.insert(0, 'scripts'); from aggregate import tab
    and place them under `data/cmapss/`. Raw data is NOT included in this
    repository.
 2. `python3 scripts/build_canonical.py` — reads `models/*.pt` + `meta_*.json`,
-   writes `data/per_sample_final_v3.csv` (+ `.md5`,
-   `per_unit_clocks_final_v3.csv`, `trainpct_thresholds_final_v3.csv`). This
+   writes `data/per_sample_final_v4.csv` (+ `.md5`,
+   `per_unit_clocks_final_v4.csv`, `trainpct_thresholds_final_v4.csv`). This
    is the slow step: one full MC-Dropout inference pass (50 dropout draws per
    window) over every calibration and evaluation engine, for all 20 (fd, seed)
    models, at h ∈ {5, 7, 10} in the same pass. **Note:** MC-Dropout is seeded
@@ -227,6 +277,14 @@ python3 -c "import sys; sys.path.insert(0, 'scripts'); from aggregate import tab
    shifts calibration-bucket sizes, e.g. FD001/seed0's CUSUM middle bucket
    goes from 397 to 394 calibration scores). This does not affect
    `aggregate.py`/`figures_final.py`, which only read the already-built CSV.
+   **Also note:** `build_canonical.py::run()` opens `per_sample_final_v4.csv`
+   fresh each run (old content is fully overwritten), but appends to
+   `per_unit_clocks_final_v4.csv` across (fd,seed) iterations without
+   deleting a pre-existing file first — delete that file (or the whole
+   `data/` output set) before re-running `build_canonical.py` a second time
+   in the same directory, or the clock file will end up with duplicated rows
+   and a corrupted `cusum_triggered` column (encountered and fixed by hand
+   while preparing this patch; not a Stage 0-R4 scope item, left as-is here).
 
 **Retrain the 20 base models from scratch** (only needed to verify training
 itself, not to reproduce the note's numbers — the checkpoints in `models/`
@@ -272,6 +330,17 @@ already are the ones every table in this repo comes from):
   label is row k+29's own RUL (its last frame) — mirrors `train_clean.py`'s
   training-time windowing exactly, for k=0..L-30 inclusive (L-29 windows
   total for an L-row unit).
+- **Split CP**: a single pooled calibration quantile `q_hat`, computed once
+  per (fd, seed) from ALL calibration units' nonconformity scores pooled
+  together (no per-stage bucketing, no CUSUM dependence) — `lo_sp, hi_sp =
+  mu ∓ q_hat * sigma`. `q_hat` is the direct k-th order statistic,
+  `k = ceil((nC+1)(1-alpha))` (1-indexed) — **[Stage 0-R4 fix]** previously
+  approximated via `np.quantile(cal_scores_all, ceil((nC+1)(1-alpha))/nC,
+  method='higher')`, the same off-by-one-prone approximation as the Stage
+  0-R3 Mondrian CP (split) fix above, and fixed for the same reason. `k > nC`
+  would give `q_hat = inf`, but does not occur in practice since `nC` (the
+  pooled calibration size, typically in the low thousands) is far larger
+  than `1/alpha = 10`. Independent of h.
 - **CUSUM change-point detection** — **[v3 changelog redefinition]** baseline
   window is `max(floor(0.2*n), 20)` scores of the unit's OWN trajectory (was
   a hardcoded `scores[:10]`), scaling with unit length instead of a fixed
@@ -297,7 +366,7 @@ already are the ones every table in this repo comes from):
   produces genuinely unbounded intervals when the real buffer's weighted
   mass at the target quantile level is thin (small/young buffer, or a stage
   whose calibration scores are unusually tight). Untouched by the Stage 0-R3
-  patch.
+  or Stage 0-R4 patch.
 - **Mondrian CP — split mode** — **[v3 changelog redefinition, was "frozen";
   Stage 0-R3 patch below]**: NOT an online/adaptive instance.
   `build_mondrian_split_quantiles()` fills each of the 3 stage buckets ONCE
@@ -329,12 +398,14 @@ already are the ones every table in this repo comes from):
   definition, since an infinite-width interval covers any finite true
   value), plus the unbounded rate itself (numerator/denominator both given)
   — never one silently substituted for the other. This finite-only
-  convention is applied uniformly across every table in `tables/`.
+  convention is applied uniformly across every table in `tables/`. Untouched
+  by the Stage 0-R4 patch (verified: 0 changed cells across every table with
+  a Mondrian CP column).
 - **Estimand and unique-engine-block bootstrap**: the headline ECR estimand
   is a per-engine average (compute each engine's own coverage rate first,
   then average across engines within a cell), not a pooled per-timestep
   average — this is what makes an "engine" the natural resampling unit.
-  Paired-difference confidence intervals (`paired_diff_v3.csv`) use a
+  Paired-difference confidence intervals (`paired_diff_v4.csv`) use a
   unique-engine-block bootstrap (10,000 resamples): the resampling block is
   one raw C-MAPSS unit id's full set of instances **across all 5 seeds**,
   drawn as a whole block — not a single (seed, unit) instance — so that
@@ -389,7 +460,7 @@ withdrawal above:
    because it was computed from cached predictions in a per-sample file
    built by **unseeded** MC-Dropout inference (the same seeding gap
    described under `legacy_leaked/`), which is irreproducible even in
-   principle. It has not been recomputed on seeded, v3 predictions and
+   principle. It has not been recomputed on seeded, v4 predictions and
    should not be cited until it is.
 2. **The early Stage 0-R2 "4/16" cohort-restriction result**, and the
    associated "Mondrian CP (online) flips in 2/4 cells" confirmation-check
@@ -401,14 +472,16 @@ withdrawal above:
    total instance count (221, vs. the correct 455) and a wrong cohort size
    (110, vs. the correct 150), which in turn produced the erroneous 4/16 and
    2/4 numbers. **Corrected** (see the v3 changelog above and
-   `tables/table_trainpct_full_vs_cohort_v3.tex`,
-   `tables/table_cusum_cohort_check_v3.csv`): 14/16 flips for the
+   `tables/table_trainpct_full_vs_cohort_v4.tex`,
+   `tables/table_cusum_cohort_check_v4.csv`): 14/16 flips for the
    train-set-percentile cohort (matching an independent external
    recomputation exactly), 0/16 flips for the CUSUM cohort. The 4/16 and 2/4
    figures must not be cited; only the corrected 14/16 and 0/16 figures are
-   current. (These cohort figures are themselves unaffected by the Stage
-   0-R3 patch — the patch changes only Mondrian CP (split), which was never
-   the source of the 4/16 or 2/4 errors.)
+   current. (These cohort figures are themselves unaffected by either the
+   Stage 0-R3 or Stage 0-R4 patch — reverified against v4: same 14/16 flip
+   set, same per-FD pattern, same 0/16 for CUSUM — since the cross-FD
+   collision bug they correct was never in the Mondrian CP (split) or Split
+   CP calibration-quantile code those two patches touch.)
 
 ## File tree
 
@@ -420,14 +493,18 @@ withdrawal above:
 │   ├── per_sample_final.md5               (v1, superseded)
 │   ├── per_sample_final_v2.csv            (v2, superseded)
 │   ├── per_sample_final_v2.md5            (v2, superseded)
-│   ├── per_sample_final_v3.csv
-│   ├── per_sample_final_v3.md5
+│   ├── per_sample_final_v3.csv            (v3, superseded)
+│   ├── per_sample_final_v3.md5            (v3, superseded)
+│   ├── per_sample_final_v4.csv
+│   ├── per_sample_final_v4.md5
 │   ├── per_unit_clocks_final.csv          (v1, superseded)
 │   ├── per_unit_clocks_final_v2.csv       (v2, superseded)
-│   ├── per_unit_clocks_final_v3.csv
+│   ├── per_unit_clocks_final_v3.csv       (v3, superseded)
+│   ├── per_unit_clocks_final_v4.csv
 │   ├── trainpct_thresholds_final.csv      (v1, superseded)
 │   ├── trainpct_thresholds_final_v2.csv   (v2, superseded)
-│   └── trainpct_thresholds_final_v3.csv
+│   ├── trainpct_thresholds_final_v3.csv   (v3, superseded)
+│   └── trainpct_thresholds_final_v4.csv
 ├── models/
 │   ├── best_{FD001..FD004}_seed{0..4}.pt      (20 files)
 │   └── meta_{FD001..FD004}_seed{0..4}.json    (20 files)
@@ -445,19 +522,21 @@ withdrawal above:
 │       ├── mondrian_cp.py
 │       └── adaptive_lambda_cp.py
 ├── tables/
-│   ├── table_main_v3.{csv,tex}
-│   ├── table_mondrian_unbounded_v3.csv
-│   ├── table_B_trainpct_v3.csv
-│   ├── table_trainpct_cohort_v3.{csv,tex}
-│   ├── table_trainpct_full_vs_cohort_v3.{csv,tex}
-│   ├── table_cusum_cohort_check_v3.csv
-│   ├── paired_diff_v3.csv
-│   ├── table_paired_diff_v3.tex
-│   ├── table_matched_v3.{csv,tex}
-│   ├── bucket_geometry_v3.csv
-│   ├── A1_clocks_v3.csv
-│   ├── A2_decile_v3.csv
-│   ├── table_h_sensitivity_v3.{csv,tex}
+│   ├── table_main_v4.{csv,tex}
+│   ├── table_mondrian_unbounded_v4.csv
+│   ├── table_B_trainpct_v4.csv
+│   ├── table_trainpct_cohort_v4.{csv,tex}
+│   ├── table_trainpct_full_vs_cohort_v4.{csv,tex}
+│   ├── table_cusum_cohort_check_v4.csv
+│   ├── paired_diff_v4.csv
+│   ├── table_paired_diff_v4.tex
+│   ├── table_matched_v4.{csv,tex}
+│   ├── bucket_geometry_v4.csv
+│   ├── A1_clocks_v4.csv
+│   ├── A2_decile_v4.csv
+│   ├── table_h_sensitivity_v4.{csv,tex}
+│   ├── v3_superseded/
+│   │   └── (all of the above, _v3-suffixed, pre-Stage-0-R4-patch)
 │   ├── v2_superseded/
 │   │   └── (all of the above, _v2-suffixed, pre-Stage-0-R3-patch)
 │   └── v1_superseded/
@@ -473,9 +552,13 @@ withdrawal above:
 │       ├── B_trainpct_final.csv
 │       └── C_matched_final.csv
 ├── figures/
-│   ├── fig_clocks_v3.pdf
-│   ├── fig_residual_deciles_v3.pdf
-│   ├── fig_failure_deciles_v3.pdf
+│   ├── fig_clocks_v4.pdf
+│   ├── fig_residual_deciles_v4.pdf
+│   ├── fig_failure_deciles_v4.pdf
+│   ├── v3_superseded/
+│   │   ├── fig_clocks_v3.pdf
+│   │   ├── fig_residual_deciles_v3.pdf
+│   │   └── fig_failure_deciles_v3.pdf
 │   ├── v2_superseded/
 │   │   ├── fig_clocks_v2.pdf
 │   │   ├── fig_residual_deciles_v2.pdf

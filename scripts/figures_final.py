@@ -1,5 +1,5 @@
-"""Redraws all 3 v2 figures: data/per_unit_clocks_final_v3.csv (from
-build_canonical.py) and tables/A2_decile_v3.csv (from aggregate.py, run that
+"""Redraws all 3 v4 figures: data/per_unit_clocks_final_v4.csv (from
+build_canonical.py) and tables/A2_decile_v4.csv (from aggregate.py, run that
 first)."""
 import pandas as pd
 import matplotlib
@@ -17,7 +17,7 @@ FDS = ['FD001', 'FD002', 'FD003', 'FD004']
 
 
 def fig_clocks():
-    clocks = pd.read_csv(DATA / 'per_unit_clocks_final_v3.csv')
+    clocks = pd.read_csv(DATA / 'per_unit_clocks_final_v4.csv')
     fig, ax = plt.subplots(figsize=(6.5, 4.5))
     ax.hist(clocks['t_knee_norm'].dropna(), bins=30, alpha=0.6,
             label='t_knee/T (RUL-clip knee)', density=True)
@@ -28,14 +28,14 @@ def fig_clocks():
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
-    fig.savefig(FIGURES / 'fig_clocks_v3.pdf')
-    fig.savefig(FIGURES / 'fig_clocks_v3.png', dpi=150)
+    fig.savefig(FIGURES / 'fig_clocks_v4.pdf')
+    fig.savefig(FIGURES / 'fig_clocks_v4.png', dpi=150)
     plt.close(fig)
-    print('wrote fig_clocks_v3.pdf')
+    print('wrote fig_clocks_v4.pdf')
 
 
 def fig_residual_deciles():
-    df = pd.read_csv(TABLES / 'A2_decile_v3.csv')
+    df = pd.read_csv(TABLES / 'A2_decile_v4.csv')
     ymax = df['median_s_t'].max() * 1.08
     fig, axes = plt.subplots(2, 2, figsize=(6.5, 4.5), sharex=True, sharey=True)
     for ax, fd in zip(axes.flat, FDS):
@@ -50,14 +50,14 @@ def fig_residual_deciles():
     for ax in axes[:, 0]:
         ax.set_ylabel('Median |s_t| (Split CP)')
     fig.tight_layout()
-    fig.savefig(FIGURES / 'fig_residual_deciles_v3.pdf')
-    fig.savefig(FIGURES / 'fig_residual_deciles_v3.png', dpi=150)
+    fig.savefig(FIGURES / 'fig_residual_deciles_v4.pdf')
+    fig.savefig(FIGURES / 'fig_residual_deciles_v4.png', dpi=150)
     plt.close(fig)
-    print('wrote fig_residual_deciles_v3.pdf')
+    print('wrote fig_residual_deciles_v4.pdf')
 
 
 def fig_failure_deciles():
-    df = pd.read_csv(TABLES / 'A2_decile_v3.csv')
+    df = pd.read_csv(TABLES / 'A2_decile_v4.csv')
     ymax = df['failure_rate'].max() * 1.08
     fig, axes = plt.subplots(2, 2, figsize=(6.5, 4.5), sharex=True, sharey=True)
     for ax, fd in zip(axes.flat, FDS):
@@ -72,10 +72,10 @@ def fig_failure_deciles():
     for ax in axes[:, 0]:
         ax.set_ylabel('Split CP failure rate (1-ECR)')
     fig.tight_layout()
-    fig.savefig(FIGURES / 'fig_failure_deciles_v3.pdf')
-    fig.savefig(FIGURES / 'fig_failure_deciles_v3.png', dpi=150)
+    fig.savefig(FIGURES / 'fig_failure_deciles_v4.pdf')
+    fig.savefig(FIGURES / 'fig_failure_deciles_v4.png', dpi=150)
     plt.close(fig)
-    print('wrote fig_failure_deciles_v3.pdf')
+    print('wrote fig_failure_deciles_v4.pdf')
 
 
 if __name__ == '__main__':
